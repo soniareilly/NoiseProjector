@@ -32,7 +32,7 @@ void Smear(double* p, double sigma, int N);
 //parameters
 double os = 2; // oversampling
 const double beta = .5;
-const int Ncycle = 20;
+const int Ncycle = 2;
 const int NHIO = 100;
 const int NER = 100;
 double tol = .1; // Shrinkwrap tolerance
