@@ -32,16 +32,17 @@ void Smear(double* p, double sigma, int N);
 //parameters
 double os = 2; // oversampling
 const double beta = .5;
-const int Ncycle = 2;
-const int NHIO = 100;
-const int NER = 100;
-double tol = .1; // Shrinkwrap tolerance
+const int Ncycle = 20;	// total number of cycles
+const int NHIO = 100;	// number of HIO per cycle
+const int NER = 100;	// number of ER per cycle
+double tol = .1;		// Shrinkwrap tolerance
 double newtontol = 1e-14; // Newton bisection tolerance
 int maxiter = 100;		 // Newton bisection max iterations
 double sigdata = .000001 * 16 / os / os / os / os; // noise std dev added to data
 double sigPN = .000001 * 16 / os / os / os / os; // noise std dev expected by constraint
 
 
+// Helper Functions
 double Sqr(double x) { return x * x; }
 double Cub(double x) { return x * x * x; }
 
@@ -50,6 +51,16 @@ void vcopy(double* x, double* y, int N)
 	for (int i = 0; i < N; ++i) y[i] = x[i];
 }
 
+int min(int i, int j)
+{
+	if (i < j)
+		return i;
+
+	return j;
+}
+
+// store 2D FFT of X in Xhat
+// X should be K * K
 void FFT2D(double* X, dcomplex* Xhat, int K, int N)
 {
 	int Karr[2];
@@ -63,7 +74,9 @@ void FFT2D(double* X, dcomplex* Xhat, int K, int N)
 }
 
 
-void IFFT2D(dcomplex* Xhat, double* X, int K, int N) //Destroys input array!!!!!!!!!!!!
+// store 2D IFFT of Xhat in X
+// Destroys input array!!!!!!!!!!!!
+void IFFT2D(dcomplex* Xhat, double* X, int K, int N)
 {
 	int Karr[2];
 	Karr[0] = K, Karr[1] = K;
@@ -73,7 +86,7 @@ void IFFT2D(dcomplex* Xhat, double* X, int K, int N) //Destroys input array!!!!!
 	fftw_destroy_plan(pbw);
 }
 
-
+// plot density p to 2Dp(num).vtr, for given (num)
 void Plot2D(double* p, int N, int num)
 {
 	stringstream str(stringstream::out);
@@ -148,7 +161,7 @@ void Plot2D(double* p, int N, int num)
 	myfile.close();
 }
 
-// behavior has changed -- now plots I, not sqrt(I)
+// plot intensity a to Amplitudes(num).vtr, for given (num)
 void Plota(double* a, int N, int num)
 {
 	stringstream str(stringstream::out);
@@ -209,18 +222,9 @@ void Plota(double* a, int N, int num)
 }
 
 
-
-
-int min(int i, int j)
-{
-	if (i < j)
-		return i;
-
-	return j;
-}
-
-
-
+// create face image and store to p
+// create corresponding square support and store to S
+// p is N * N, S is N * N
 void Makep(double* p, int N, int* S)
 {
 	double x, y;
@@ -246,7 +250,6 @@ void Makep(double* p, int N, int* S)
 			{
 				p[j + i * N] = 0;
 			}
-
 		}
 	}
 
@@ -255,7 +258,8 @@ void Makep(double* p, int N, int* S)
 }
 
 
-
+// magnitude projector
+// stores projection of p in PMp, where mag is intensity data
 void PM(double* p, double* PMp, double* mag, int N)
 {
 	int N2 = N / 2 + 1;
@@ -274,7 +278,7 @@ void PM(double* p, double* PMp, double* mag, int N)
 	IFFT2D(phat.data(), PMp, N, 1);
 }
 
-
+// magnitude projector, operating in Fourier space
 void PMhat(dcomplex* phat, dcomplex* PMphat, double* mag, int D)
 {
 	for (int i = 0; i < D; ++i)
@@ -290,6 +294,8 @@ void PMhat(dcomplex* phat, dcomplex* PMphat, double* mag, int D)
 	}
 }
 
+// noise projector, assuming constant Gaussian noise
+// given intensity I and data mag, stores projection in PNI
 void PN(double* I, double* PNI, double* mag, int N)
 {
 	int N2 = N / 2 + 1;
@@ -302,6 +308,7 @@ void PN(double* I, double* PNI, double* mag, int N)
 
 	double lambda = 1 - sqrt(Ierr / N / N2 / Sqr(sigPN));
 
+	// if lambda is negative, PNI is on the constraint, so project
 	if (lambda < 0)
 	{
 		for (int i = 0; i < N * N2; ++i)
@@ -309,6 +316,7 @@ void PN(double* I, double* PNI, double* mag, int N)
 			PNI[i] = (I[i] - lambda * mag[i]) / (1 - lambda);
 		}
 	}
+	// otherwise the constraint is already satisfied, so PNI = I
 	else
 	{
 		for (int i = 0; i < N * N2; ++i)
@@ -318,7 +326,9 @@ void PN(double* I, double* PNI, double* mag, int N)
 	}
 }
 
-// Function Evaluation
+// Bisection Bounded Newton Iteration for variable noise projector
+
+// Function Evaluation -- f(-lambda)
 void ComputeLF(double& F, double neglambda, double* I, double* Id, double* sigma, int N)
 {
 	int N2 = N / 2 + 1;
@@ -331,8 +341,7 @@ void ComputeLF(double& F, double neglambda, double* I, double* Id, double* sigma
 	F = F / N / N2 - 1;
 }
 
-
-// Derivative Evaluation
+// Derivative Evaluation -- f'(-lambda)
 void ComputeLFp(double& Fp, double neglambda, double* I, double* Id, double* sigma, int N)
 {
 	int N2 = N / 2 + 1;
@@ -345,12 +354,11 @@ void ComputeLFp(double& Fp, double neglambda, double* I, double* Id, double* sig
 	Fp = 2 * Fp / N / N2;
 }
 
-
-
+// Bisection Bounded Newton to solve f(-lambda) = 0
 void Tikhonov(double* sigma, double* I, double* Id, int N, double& lambda)
 {
 	double F, Fp;
-	double lb = 0, ub = 1e100;			// initial bounds
+	double lb = 0, ub = 1e200;			// initial bounds
 	double neglambda = - lambda;
 
 	double neglambdaold = 0;
@@ -385,7 +393,7 @@ void Tikhonov(double* sigma, double* I, double* Id, int N, double& lambda)
 			else
 			{
 				lb = neglambda;
-				if (ub < 1e50)
+				if (ub < 1e100)
 				{
 					neglambda = (ub + neglambda) / 2;
 				}
@@ -395,7 +403,7 @@ void Tikhonov(double* sigma, double* I, double* Id, int N, double& lambda)
 				}
 			}
 		}
-		if (neglambda > 1e50 || neglambda < 1e-50)
+		if (neglambda > 1e100 || neglambda < 1e-100)
 		{
 			cout << "bad lambda" << " " << neglambda << endl;
 			break;
@@ -407,13 +415,15 @@ void Tikhonov(double* sigma, double* I, double* Id, int N, double& lambda)
 	lambda = - neglambda;
 }
 
-// alternate noise projector for variable noise
+// noise projector for variable noise
 void PNvarnoise(double* I, double* PNI, double* mag, double* sigPNs, int N)
 {
 	int N2 = N / 2 + 1;
 	double lambda = -1; // initialization
+	// solve for Lagrange multiplier using Newton
 	Tikhonov(sigPNs, I, mag, N, lambda);
 	
+	// if lambda is negative, PNI is on the constraint, so project
 	if (lambda < 0)
 	{
 		for (int i = 0; i < N * N2; ++i)
@@ -421,6 +431,7 @@ void PNvarnoise(double* I, double* PNI, double* mag, double* sigPNs, int N)
 			PNI[i] = (I[i] - lambda * mag[i] / Sqr(sigPNs[i])) / (1 - lambda / Sqr(sigPNs[i]));
 		}
 	}
+	// otherwise the constraint is already satisfied, so PNI = I
 	else
 	{
 		for (int i = 0; i < N * N2; ++i)
@@ -430,6 +441,7 @@ void PNvarnoise(double* I, double* PNI, double* mag, double* sigPNs, int N)
 	}
 }
 
+// intensity filtering for HIO
 void G(double* I, double* GI, double* p, int* S, int N)
 {
 	int N2 = N / 2 + 1;
@@ -472,13 +484,12 @@ void HIO(double* p, double* mag, int* S, double* sigPNs, int N)
 	// apply noise projector
 	vector<double> PNIp(N * N2);
 	PNvarnoise(GI.data(), PNIp.data(), mag, sigPNs, N);
-	//PN(GI.data(), PNIp.data(), mag, N);			// constant noise projector
+    //PN(GI.data(), PNIp.data(), mag, N);			// constant noise projector
 	//vcopy(GI.data(), PNIp.data(), N);			// no noise projector
 	
+	// apply magnitude projector
 	vector<double> PMp(N * N);
-
 	PM(p, PMp.data(), PNIp.data(), N);
-	//PM(p, PMp.data(), mag, N);
 
 	for (int i = 0; i < N * N; ++i)
 	{
@@ -524,9 +535,7 @@ void ER(double* p, double* mag, int* S, double* sigPNs, int N)
 
 	// apply magnitude projector
 	vector<double> PMp(N * N);
-
 	PM(p, PMp.data(), PNIp.data(), N);
-	//PM(p, PMp.data(), mag, N);
 
 	// apply support projector
 	for (int i = 0; i < N * N; ++i)
@@ -622,17 +631,39 @@ int main()
 	vector<double> sigdatas(N * N2);
 	vector<double> sigPNs(N * N2);
 
-	for (int i = 0; i < N * N2; ++i) sigdatas[i] = sigdata;
-	for (int i = 0; i < N * N2; ++i) sigPNs[i] = sigPN;
+	// non-uniform Gaussian noise
+	// variance is radial Gaussian centered at (0,0)
+	double R = 0.2; // stdev of radial Gaussian
+	double x; double y; double r;
+	for (int i = 0; i < N; ++i)
+	{
+		for (int j = 0; j < N2; ++j)
+		{
+			x = min(i, N - i); y = j;
+			x /= N2; y /= N2;
+			r = sqrt(Sqr(x) + Sqr(y));
+			sigdatas[j + i * N2] = sigdata * exp(-Sqr(r / R) / 2);
+			sigPNs[j + i * N2] = sigPN * exp(-Sqr(r / R) / 2);
+		}
+	}
+
+	// uniform Gaussian noise
+	//for (int i = 0; i < N * N2; ++i) sigdatas[i] = sigdata;
+	//for (int i = 0; i < N * N2; ++i) sigPNs[i] = sigPN;
 
 	MakeData(a.data(), S.data(), sigdatas.data(), N);
+	//Plota(sigdatas.data(), N, 0);
 	Plota(a.data(), N, 0);
-	cout << "max of A: " << *max_element(a.data(), a.data() + N * N2) << endl;
+
+	// print noise and intensity values on (0,0) to (0,1) line
+	for (int j = 0; j < N2; ++j)
+	{
+		cout << "y: " << j / N2 << "		sigdata: " << sigdatas[j] << "		A: " << a[j] << endl;
+	}
 
 	// Initialization
 	gsl_rng* rng = gsl_rng_alloc(gsl_rng_ranlxs0);
 	gsl_rng_set(rng, 12);
-
 	for (int i = 0; i < N * N; ++i)
 	{
 		if (S[i])
@@ -643,7 +674,6 @@ int main()
 
 	int counter = 0;
 	Plot2D(p.data(), N, counter++);
-
 
 	// Reconstruction 
 	for (int c = 0; c < Ncycle; ++c)
@@ -670,6 +700,17 @@ int main()
 	}
 	Plot2D(p.data(), N, counter);
 
+	// RMS error
+	vector<double> ptrue(N * N);
+	Makep(ptrue.data(), N, S.data());
+
+	double rms = 0;
+	for (int i = 0; i < N * N; ++i)
+	{
+		rms += Sqr(p[i] - ptrue[i]);
+	}
+	rms = sqrt(rms / N / N);
+	cout << "RMS: " << rms << endl;
 
 	return 1;
 }
