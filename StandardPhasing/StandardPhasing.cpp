@@ -244,7 +244,7 @@ void Makep(double* p, int N, int* S)
 			if (Sqr(x) + Sqr(y) < Sqr(.4) && (Sqr(x - .15) + Sqr(y - .15) > Sqr(.1)) && Sqr(x + .15) + Sqr(y - .15) > Sqr(.1) && Sqr(x) + 12 * Sqr(y + .15) > Sqr(.3))
 			{
 
-				p[j + i * N] = 1;
+				p[j + i * N] = 1e6;
 			}
 			else
 			{
@@ -358,11 +358,21 @@ void ComputeLFp(double& Fp, double neglambda, double* I, double* Id, double* sig
 void Tikhonov(double* sigma, double* I, double* Id, int N, double& lambda)
 {
 	double F, Fp;
-	double lb = 0, ub = 1e200;			// initial bounds
+	double lb = 0, ub = 1e100;			// initial bounds
 	double neglambda = - lambda;
 
 	double neglambdaold = 0;
 	int iter = 0;
+
+	// for debugging
+	/*
+	double flambda = 0;
+	for (int i = -100; i < 101; ++i)
+	{
+		ComputeLF(flambda, -pow(10,i), I, Id, sigma, N);
+		cout << "lambda = 1e" << i << "		flambda = " << flambda << endl;
+	}
+	*/
 
 	while (iter < maxiter)
 	{
@@ -375,6 +385,7 @@ void Tikhonov(double* sigma, double* I, double* Id, int N, double& lambda)
 		if (neglambda - F / Fp > lb && neglambda - F / Fp < ub && fabs(F / Fp) < 10 * neglambda)
 		{
 			neglambda -= F / Fp;
+			//cout << "Newton step: -lambda = " << neglambda << endl;
 		}
 		else // Bisection Step otherwise
 		{
@@ -402,6 +413,7 @@ void Tikhonov(double* sigma, double* I, double* Id, int N, double& lambda)
 					neglambda *= 10;
 				}
 			}
+			//cout << "Bisection step: -lambda = " << neglambda << endl;
 		}
 		if (neglambda > 1e100 || neglambda < 1e-100)
 		{
@@ -419,9 +431,10 @@ void Tikhonov(double* sigma, double* I, double* Id, int N, double& lambda)
 void PNvarnoise(double* I, double* PNI, double* mag, double* sigPNs, int N)
 {
 	int N2 = N / 2 + 1;
-	double lambda = -1; // initialization
+	double lambda = -1e90; // initialization
 	// solve for Lagrange multiplier using Newton
 	Tikhonov(sigPNs, I, mag, N, lambda);
+	//cout << "Lambda:     " << lambda << endl;
 	
 	// if lambda is negative, PNI is on the constraint, so project
 	if (lambda < 0)
@@ -485,7 +498,7 @@ void HIO(double* p, double* mag, int* S, double* sigPNs, int N)
 	vector<double> PNIp(N * N2);
 	PNvarnoise(GI.data(), PNIp.data(), mag, sigPNs, N);
     //PN(GI.data(), PNIp.data(), mag, N);			// constant noise projector
-	//vcopy(GI.data(), PNIp.data(), N);			// no noise projector
+	//vcopy(GI.data(), PNIp.data(), N);				// no noise projector
 	
 	// apply magnitude projector
 	vector<double> PMp(N * N);
@@ -525,13 +538,13 @@ void ER(double* p, double* mag, int* S, double* sigPNs, int N)
 	// intensity filtering
 	vector <double> GI(N * N2);
 	G(I.data(), GI.data(), p, S, N);
-	//vcopy(I.data(), GI.data(), N * N2);		// no intensity filtering
+	//vcopy(I.data(), GI.data(), N * N2);			// no intensity filtering
 
 	// apply noise projector
 	vector<double> PNIp(N * N2);
 	PNvarnoise(GI.data(), PNIp.data(), mag, sigPNs, N);
 	//PN(GI.data(), PNIp.data(), mag, N);			// constant noise projector
-	//vcopy(GI.data(), PNIp.data(), N);			// no noise projector
+	//vcopy(GI.data(), PNIp.data(), N);				// no noise projector
 
 	// apply magnitude projector
 	vector<double> PMp(N * N);
@@ -580,9 +593,18 @@ void Shrinkwrap(double* p, int* S, int N, int& counter)
 
 	Smear(psmear.data(), 1.0 / N, N);
 
+	double maxp = -1e100;
 	for (int i = 0; i < N * N; ++i)
 	{
-		if (psmear[i] < tol)
+		if (psmear[i] > maxp)
+		{
+			maxp = psmear[i];
+		}
+	}
+
+	for (int i = 0; i < N * N; ++i)
+	{
+		if (psmear[i] < tol*maxp)
 		{
 			S[i] = 0;
 			p[i] = 0;
@@ -596,7 +618,7 @@ void Shrinkwrap(double* p, int* S, int N, int& counter)
 }
 
 
-void MakeData(double* a, int* S, double* sigdatas, int N)
+void MakeData(double* a, int* S, int N)
 {
 	int N2 = N / 2 + 1;
 
@@ -606,19 +628,72 @@ void MakeData(double* a, int* S, double* sigdatas, int N)
 	FFT2D(p.data(), phat.data(), N, 1);
 
 	for (int i = 0; i < N * N2; ++i) a[i] = Sqr(abs(phat[i]));
+}
+ 
+// root mean square error between two densities
+// where translation is unknown
+double RMS_translation(double* p, double* ptrue, int N)
+{
+	int N2 = N / 2 + 1;
 
-	// add noise to data
-	gsl_rng* rng = gsl_rng_alloc(gsl_rng_ranlxs0);
-	gsl_rng_set(rng, 12);
+	vector<dcomplex> phat(N * N2);
+	vector<dcomplex> ptruehat(N * N2);
+	vector<dcomplex> convhat(N * N2);
+	vector<double> conv(N * N);
+
+	// convolve p with ptrue
+	FFT2D(p, phat.data(), N, 1);
+	FFT2D(ptrue, ptruehat.data(), N, 1);
+
 	for (int i = 0; i < N * N2; ++i)
 	{
-		a[i] += gsl_ran_gaussian(rng, sigdatas[i]);
-		if (a[i] < 0)
+		convhat[i] = phat[i] * ptruehat[i];
+	}
+
+	IFFT2D(convhat.data(), conv.data(), N, 1);
+
+	// max of convolution
+	double err = -1e100;
+	double pnormsq = 0;
+	double ptruenormsq = 0;
+	for (int i = 0; i < N * N; ++i)
+	{
+		if (conv[i] > err)
 		{
-			a[i] = 0;
+			err = conv[i];
+		}
+		pnormsq += Sqr(p[i]);
+		ptruenormsq += Sqr(ptrue[i]);
+	}
+
+	// return rms error
+	err = sqrt((pnormsq + ptruenormsq) / N / N - 2 * err);
+
+	return err;
+}
+
+// root mean square error between two densities
+// where translation and vertical reflection is unknown
+double RMS(double* p, double* ptrue, int N)
+{
+	// reflection of density
+	vector<double> pflip(N * N);
+	for (int i = 0; i < N; ++i)
+	{
+		for (int j = 0; j < N; ++j)
+		{
+			pflip[N - j + i * N] = p[j + i * N];
 		}
 	}
+
+	// return min error of two possible reflections
+	double err = RMS_translation(p, ptrue, N);
+	double errflip = RMS_translation(pflip.data(), ptrue, N);
+	cout << err << "		" << errflip << endl;
+
+	return min(err, errflip);
 }
+
 
 int main()
 {
@@ -633,6 +708,7 @@ int main()
 
 	// non-uniform Gaussian noise
 	// variance is radial Gaussian centered at (0,0)
+	/*
 	double R = 0.2; // stdev of radial Gaussian
 	double x; double y; double r;
 	for (int i = 0; i < N; ++i)
@@ -646,29 +722,46 @@ int main()
 			sigPNs[j + i * N2] = sigPN * exp(-Sqr(r / R) / 2);
 		}
 	}
+	*/
 
 	// uniform Gaussian noise
 	//for (int i = 0; i < N * N2; ++i) sigdatas[i] = sigdata;
 	//for (int i = 0; i < N * N2; ++i) sigPNs[i] = sigPN;
 
-	MakeData(a.data(), S.data(), sigdatas.data(), N);
-	//Plota(sigdatas.data(), N, 0);
+	MakeData(a.data(), S.data(), N);
 	Plota(a.data(), N, 0);
+	for (int i = 0; i < N * N2; ++i)
+	{
+		sigdatas[i] = sqrt(a[i]);
+		sigPNs[i] = sqrt(a[i]);
+	}
+
+	// add noise to data
+	gsl_rng* rng = gsl_rng_alloc(gsl_rng_ranlxs0);
+	gsl_rng_set(rng, 12);
+	for (int i = 0; i < N * N2; ++i)
+	{
+		a[i] += gsl_ran_gaussian(rng, sigdatas[i]);
+		if (a[i] < 0)
+		{
+			a[i] = 0;
+		}
+	}
 
 	// print noise and intensity values on (0,0) to (0,1) line
 	for (int j = 0; j < N2; ++j)
 	{
-		cout << "y: " << j / N2 << "		sigdata: " << sigdatas[j] << "		A: " << a[j] << endl;
+		cout << "y: " << j * 1.0 / N2 << "		sigdata: " << sigdatas[j] << "		A: " << a[j] << endl;
 	}
 
 	// Initialization
-	gsl_rng* rng = gsl_rng_alloc(gsl_rng_ranlxs0);
-	gsl_rng_set(rng, 12);
+	//gsl_rng* rng = gsl_rng_alloc(gsl_rng_ranlxs0);
+	//gsl_rng_set(rng, 12);
 	for (int i = 0; i < N * N; ++i)
 	{
 		if (S[i])
 		{
-			p[i] = gsl_rng_uniform(rng);
+			p[i] = 1e6*gsl_rng_uniform(rng);
 		}
 	}
 
@@ -697,6 +790,22 @@ int main()
 			ER(p.data(), a.data(), S.data(), sigPNs.data(), N);
 		}
 		//ER(p.data(), a.data(), S.data(), N);
+
+		// plot max and min of p for debugging
+		double minp = 1e100;
+		double maxp = -1e100;
+		for (int i = 0; i < N * N; ++i)
+		{
+			if (p[i] > maxp)
+			{
+				maxp = p[i];
+			}
+			if (p[i] < minp)
+			{
+				minp = p[i];
+			}
+		}
+		cout << "Max of p:	" << maxp << "		Min of p:  " << minp << endl;
 	}
 	Plot2D(p.data(), N, counter);
 
@@ -704,12 +813,7 @@ int main()
 	vector<double> ptrue(N * N);
 	Makep(ptrue.data(), N, S.data());
 
-	double rms = 0;
-	for (int i = 0; i < N * N; ++i)
-	{
-		rms += Sqr(p[i] - ptrue[i]);
-	}
-	rms = sqrt(rms / N / N);
+	double rms = RMS(p.data(), ptrue.data(), N);
 	cout << "RMS: " << rms << endl;
 
 	return 1;
