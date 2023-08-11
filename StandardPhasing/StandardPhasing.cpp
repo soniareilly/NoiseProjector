@@ -38,8 +38,8 @@ const int NER = 100;	// number of ER per cycle
 double tol = .1;		// Shrinkwrap tolerance
 double newtontol = 1e-14; // Newton bisection tolerance
 int maxiter = 100;		 // Newton bisection max iterations
-double sigdata = .000001 * 16 / os / os / os / os; // noise std dev added to data
-double sigPN = .000001 * 16 / os / os / os / os; // noise std dev expected by constraint
+double sigdata = 100000 * 16 / os / os / os / os; // noise std dev added to data
+double sigPN = 100000 * 16 / os / os / os / os; // noise std dev expected by constraint
 
 
 // Helper Functions
@@ -496,8 +496,8 @@ void HIO(double* p, double* mag, int* S, double* sigPNs, int N)
 
 	// apply noise projector
 	vector<double> PNIp(N * N2);
-	PNvarnoise(GI.data(), PNIp.data(), mag, sigPNs, N);
-    //PN(GI.data(), PNIp.data(), mag, N);			// constant noise projector
+	//PNvarnoise(GI.data(), PNIp.data(), mag, sigPNs, N);
+    PN(GI.data(), PNIp.data(), mag, N);			// constant noise projector
 	//vcopy(GI.data(), PNIp.data(), N);				// no noise projector
 	
 	// apply magnitude projector
@@ -542,8 +542,8 @@ void ER(double* p, double* mag, int* S, double* sigPNs, int N)
 
 	// apply noise projector
 	vector<double> PNIp(N * N2);
-	PNvarnoise(GI.data(), PNIp.data(), mag, sigPNs, N);
-	//PN(GI.data(), PNIp.data(), mag, N);			// constant noise projector
+	//PNvarnoise(GI.data(), PNIp.data(), mag, sigPNs, N);
+	PN(GI.data(), PNIp.data(), mag, N);			// constant noise projector
 	//vcopy(GI.data(), PNIp.data(), N);				// no noise projector
 
 	// apply magnitude projector
